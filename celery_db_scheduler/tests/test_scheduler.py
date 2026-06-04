@@ -414,7 +414,7 @@ class TestDynamicDatabaseSchedulerTick:
 
     def test_tick_triggers_sync_after_interval(self, monkeypatch, fake_registry, mock_celery_app):
         s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app, schedules=[])
-        s._last_sync = 0.0  # force sync
+        s._last_sync = time.monotonic() - s._sync_interval - 1  # force sync
         s.sync = MagicMock()
 
         s.tick()
