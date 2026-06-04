@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "celery-db-scheduler"
+version = "1.0.0"
+description = "A SQLAlchemy-backed Celery Beat scheduler with support for dynamic, one-time, and windowed task scheduling."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+authors = [
+    { name = "c05m0ch405", email = "z@zk5.digital" },
+]
+keywords = [
+    "celery",
+    "celery-beat",
+    "scheduler",
+    "sqlalchemy",
+    "postgresql",
+    "task-queue",
+    "dynamic-scheduler",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "celery>=5.3",
+    "sqlalchemy>=2.0",
+    "asyncpg>=0.29",
+    "pydantic>=2.0",
+    "pytz>=2024.1",
+]
+
+[project.optional-dependencies]
+# Use 'sync' for pre-built wheels (easier install, not for production musl/alpine builds).
+sync = ["psycopg2-binary>=2.9"]
+# Use 'sync-src' to compile from source (recommended for production).
+sync-src = ["psycopg2>=2.9"]
+
+[project.urls]
+Homepage = "https://github.com/c05m0ch405/celery-db-scheduler"
+Repository = "https://github.com/c05m0ch405/celery-db-scheduler"
+"Bug Tracker" = "https://github.com/c05m0ch405/celery-db-scheduler/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["celery_db_scheduler"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "celery_db_scheduler/",
+    "Readme.md",
+    "pyproject.toml",
+]

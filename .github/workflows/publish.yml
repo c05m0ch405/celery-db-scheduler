@@ -1,0 +1,106 @@
+# Publishes celery-db-scheduler to PyPI on every GitHub Release.
+#
+# Trusted publishing (OIDC) is used by default — no long-lived secrets needed.
+# To set it up on PyPI:
+#   1. Go to https://pypi.org/manage/account/publishing/
+#   2. Add a new publisher: owner=<your-gh-user>, repo=celery-db-scheduler,
+#      workflow=publish.yml, environment=pypi
+#
+# If you prefer an API token instead, see the comment in the "publish" job.
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # ── 1. Tests ──────────────────────────────────────────────────────────────
+  test:
+    name: Test (Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + test dependencies
+        run: |
+          pip install -e ".[sync]"
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Run tests
+        run: pytest tests/ -v --tb=short --cov=celery_db_scheduler --cov-report=term-missing
+
+  # ── 2. Build ──────────────────────────────────────────────────────────────
+  build:
+    name: Build sdist & wheel
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install hatch
+        run: pip install hatch
+
+      - name: Build distributions
+        run: hatch build
+
+      - name: Verify distributions with twine
+        run: |
+          pip install twine
+          twine check dist/*
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── 3. Publish ────────────────────────────────────────────────────────────
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+
+    # The "pypi" environment lets you add protection rules (e.g. required
+    # reviewers) before any release goes live.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/celery-db-scheduler
+
+    permissions:
+      id-token: write  # Required for OIDC trusted publishing
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      # ── Trusted publishing (default, recommended) ──
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      # ── API token (alternative) ──────────────────────────────────────────
+      # If you cannot use trusted publishing, comment out the step above,
+      # uncomment the block below, and add PYPI_API_TOKEN to your repository
+      # secrets (Settings → Secrets → Actions).
+      #
+      # - name: Publish to PyPI (API token)
+      #   uses: pypa/gh-action-pypi-publish@release/v1
+      #   with:
+      #     password: ${{ secrets.PYPI_API_TOKEN }}
