@@ -54,6 +54,10 @@ Repository = "https://github.com/c05m0ch405/celery-db-scheduler"
 [tool.hatch.build.targets.wheel]
 packages = ["celery_db_scheduler"]
 
+[tool.pytest.ini_options]
+testpaths = ["celery_db_scheduler/tests"]
+asyncio_mode = "strict"
+
 [tool.hatch.build.targets.sdist]
 include = [
     "celery_db_scheduler/",

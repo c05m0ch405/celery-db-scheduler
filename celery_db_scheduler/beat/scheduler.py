@@ -19,8 +19,16 @@ DATABASE_URL = os.getenv(
     "postgresql://username:password@localhost/db-test",
 )
 
-sync_engine = create_engine(DATABASE_URL)
-SyncSession = sessionmaker(sync_engine)
+_sync_engine = None
+SyncSession = None
+
+
+def _init_session() -> None:
+    """Lazily create the sync engine and session factory."""
+    global _sync_engine, SyncSession
+    if SyncSession is None:
+        _sync_engine = create_engine(DATABASE_URL)
+        SyncSession = sessionmaker(_sync_engine)
 
 
 class OneTimeSchedule(schedule):
@@ -80,6 +88,7 @@ class DynamicDatabaseScheduler(Scheduler):
     def sync(self):
         """Load enabled schedules from the database."""
         logger.info("Syncing periodic tasks from database...")
+        _init_session()
         try:
             with SyncSession() as session:
                 schedules = get_enabled_schedules_sync(session)
@@ -259,6 +268,7 @@ class DynamicDatabaseScheduler(Scheduler):
 
     def _update_last_run_at(self, entry_name: str, last_run_at: datetime) -> None:
         """Persist last_run_at to the database."""
+        _init_session()
         try:
             task_id = int(entry_name.split("-")[-1])
             with SyncSession() as session:

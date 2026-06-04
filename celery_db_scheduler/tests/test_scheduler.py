@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from celery_db_scheduler.base import Base
 from celery_db_scheduler.models.task_schedule import TaskSchedule
-from .scheduler import DynamicDatabaseScheduler, OneTimeSchedule
+from ..beat.scheduler import DynamicDatabaseScheduler, OneTimeSchedule
 
 
 # ---------------------------------------------------------------------------
@@ -453,17 +453,17 @@ class TestUpdateLastRunAt:
             row = TaskSchedule(
                 task_name="myapp.add",
                 interval_seconds=30,
-                is_enabled=True,
+                enabled=True,
             )
             session.add(row)
             session.commit()
             task_id = row.id
 
+        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app)
         monkeypatch.setattr(
             "celery_db_scheduler.beat.scheduler.SyncSession",
             Session,
         )
-        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app)
         now = datetime.now(timezone.utc)
         s._update_last_run_at(f"myapp.add-{task_id}", now)
 
@@ -474,11 +474,11 @@ class TestUpdateLastRunAt:
     def test_update_missing_task_logs_warning(
         self, monkeypatch, sqlite_session_factory, mock_celery_app, fake_registry, caplog
     ):
+        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app)
         monkeypatch.setattr(
             "celery_db_scheduler.beat.scheduler.SyncSession",
             sqlite_session_factory,
         )
-        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app)
 
         import logging
         with caplog.at_level(logging.WARNING, logger="celery_db_scheduler.beat.scheduler"):

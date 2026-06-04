@@ -34,7 +34,7 @@ jobs:
           pip install pytest pytest-cov pytest-asyncio
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short --cov=celery_db_scheduler --cov-report=term-missing
+        run: pytest celery_db_scheduler/tests/ -v --tb=short --cov=celery_db_scheduler --cov-report=term-missing
 
   # ── 2. Build ──────────────────────────────────────────────────────────────
   build:
