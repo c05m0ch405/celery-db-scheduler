@@ -14,6 +14,7 @@ A **SQLAlchemy-backed Celery Beat scheduler** that stores task schedules in a Po
 - **Dynamic scheduling** — add or remove tasks at runtime via database rows; Beat picks up changes within 60 seconds.
 - **One-time tasks** — schedule a task to fire once at a specific UTC datetime; the library marks it disabled automatically after execution.
 - **Recurring tasks** — standard interval-based schedules (`interval_seconds`).
+- **Cron tasks** — wall-clock schedules via a 5-field cron expression, evaluated in each row's `timezone`.
 - **Time-window support** — restrict when a task may run using `start_datetime`, `end_datetime`, `daily_start_time`, `daily_end_time`, and a per-schedule `timezone`.
 - **Async-first workers** — built-in async SQLAlchemy session factory for FastAPI / asyncio workers.
 - **Sync Beat process** — the Beat scheduler uses a standard synchronous SQLAlchemy session, compatible with all Celery Beat deployments.
@@ -84,6 +85,8 @@ target_metadata = [AppBase.metadata, SchedulerBase.metadata]
 
 ```python
 # myapp/celery_app.py
+import os
+
 from celery import Celery
 
 celery_app = Celery("myapp", broker="redis://localhost:6379/0")
@@ -91,6 +94,8 @@ celery_app = Celery("myapp", broker="redis://localhost:6379/0")
 celery_app.conf.update(
     result_backend="redis://localhost:6379/0",
     beat_scheduler="celery_db_scheduler.beat.scheduler.DynamicDatabaseScheduler",
+    # Optional: skip cron runs missed by more than this many seconds (default 3600)
+    beat_cron_starting_deadline=int(os.getenv("BEAT_CRON_STARTING_DEADLINE", "3600")),
 )
 ```
 
@@ -186,7 +191,8 @@ or delete is reflected in the next sync cycle — no restart needed.
 | Field | Type | Description |
 |---|---|---|
 | `task_name` | `str` | Dotted Celery task name, e.g. `"myapp.tasks.send_report"` |
-| `interval_seconds` | `int \| None` | Recurrence interval. `None` = one-time task |
+| `interval_seconds` | `int \| None` | Recurrence interval. `None` = one-time or cron task |
+| `cron_expression` | `str \| None` | Standard 5-field cron (`minute hour day month weekday`). When set, fires on wall-clock times in `timezone` instead of using `interval_seconds` |
 | `task_args` | `list` | Positional arguments passed to the task |
 | `task_kwargs` | `dict` | Keyword arguments passed to the task |
 | `enabled` | `bool` | Set to `False` to pause the task |

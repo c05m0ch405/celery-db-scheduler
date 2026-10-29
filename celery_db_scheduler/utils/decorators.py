@@ -33,6 +33,7 @@ def auto_disable_one_time_task():
                     if (
                         schedule
                         and schedule.interval_seconds is None
+                        and not schedule.cron_expression
                         and schedule.enabled
                     ):
                         schedule.enabled = False
@@ -55,6 +56,7 @@ def auto_disable_one_time_task():
                     if (
                         schedule
                         and schedule.interval_seconds is None
+                        and not schedule.cron_expression
                         and schedule.enabled
                     ):
                         schedule.enabled = False

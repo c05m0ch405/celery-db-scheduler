@@ -13,7 +13,11 @@ Quickstart
 """
 
 from celery_db_scheduler.base import Base
-from celery_db_scheduler.beat.scheduler import DynamicDatabaseScheduler, OneTimeSchedule
+from celery_db_scheduler.beat.scheduler import (
+    CronSchedule,
+    DynamicDatabaseScheduler,
+    OneTimeSchedule,
+)
 from celery_db_scheduler.models.task_schedule import TaskSchedule
 from celery_db_scheduler.schemas.task_schedule import TaskScheduleCreate, TaskScheduleRead
 from celery_db_scheduler.utils.decorators import (
@@ -24,6 +28,7 @@ from celery_db_scheduler.utils.decorators import (
 
 __all__ = [
     "Base",
+    "CronSchedule",
     "DynamicDatabaseScheduler",
     "OneTimeSchedule",
     "TaskSchedule",

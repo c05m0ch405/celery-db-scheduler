@@ -2,9 +2,11 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from celery.beat import Scheduler  # type: ignore
-from celery.schedules import schedule  # type: ignore
+from celery.schedules import crontab, schedule  # type: ignore
+from celery.utils.time import ffwd  # type: ignore
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -75,6 +77,45 @@ class OneTimeSchedule(schedule):
         return f"<OneTimeSchedule: {self.run_at.isoformat()}, has_run={self._has_run}>"
 
 
+class CronSchedule(crontab):
+    """Crontab evaluated in the schedule's own timezone instead of Celery's.
+
+    The expression uses the standard 5 fields:
+    minute hour day_of_month month_of_year day_of_week.
+    """
+
+    def __init__(self, expression: str, tz_name: str = "UTC", nowfun=None, app=None):
+        fields = expression.split()
+        if len(fields) != 5:
+            raise ValueError(
+                f"Cron expression must have 5 fields, got {len(fields)}: {expression!r}"
+            )
+        minute, hour, day_of_month, month_of_year, day_of_week = fields
+        super().__init__(
+            minute=minute,
+            hour=hour,
+            day_of_week=day_of_week,
+            day_of_month=day_of_month,
+            month_of_year=month_of_year,
+            nowfun=nowfun,
+            app=app,
+        )
+        self.expression = expression
+        self.tz = ZoneInfo(tz_name)
+
+    def now(self):
+        return self.maybe_make_aware(super().now()).astimezone(self.tz)
+
+    def remaining_delta(self, last_run_at, tz=None, ffwd=ffwd):
+        # crontab matches hour/day against last_run_at's own tzinfo, which is UTC
+        # when loaded from the DB, so it must be converted first.
+        last_run_at = self.maybe_make_aware(last_run_at).astimezone(self.tz)
+        return super().remaining_delta(last_run_at, tz=tz, ffwd=ffwd)
+
+    def __repr__(self):
+        return f"<CronSchedule: {self.expression} ({self.tz.key})>"
+
+
 class DynamicDatabaseScheduler(Scheduler):
     """Database-backed Celery Beat scheduler with one-time task support."""
 
@@ -110,8 +151,25 @@ class DynamicDatabaseScheduler(Scheduler):
                     kwargs = schedule_obj.task_kwargs or {}
                     entry_name = f"{schedule_obj.task_name}-{schedule_obj.id}"
 
+                    is_cron = bool(schedule_obj.cron_expression)
+
                     # Build appropriate schedule
-                    if schedule_obj.interval_seconds is None:
+                    if is_cron:
+                        try:
+                            sched = CronSchedule(
+                                schedule_obj.cron_expression,
+                                schedule_obj.timezone or "UTC",
+                                app=self.app,
+                            )
+                        except (ValueError, ZoneInfoNotFoundError) as e:
+                            logger.error(
+                                f"Invalid cron schedule for task {schedule_obj.id} "
+                                f"({schedule_obj.cron_expression!r}, "
+                                f"tz={schedule_obj.timezone!r}): {e}"
+                            )
+                            continue
+                        logger.debug(f"Loaded cron task {entry_name}: {sched!r}")
+                    elif schedule_obj.interval_seconds is None:
                         # One-time task
                         if not schedule_obj.start_datetime:
                             logger.warning(
@@ -173,14 +231,19 @@ class DynamicDatabaseScheduler(Scheduler):
 
                     # Determine last_run_at
                     existing_entry = self._entries.get(entry_name)
-                    if schedule_obj.interval_seconds is not None and existing_entry:
+                    is_recurring = is_cron or schedule_obj.interval_seconds is not None
+                    if is_recurring and existing_entry:
                         # Recurring task: preserve in-memory state
                         last_run_at = existing_entry.last_run_at
                     else:
+                        # One-time task or new task: use database value.
+                        # A new cron task without last_run_at gets Celery's default
+                        # (now), so it first fires at the next matching time.
                         last_run_at = schedule_obj.last_run_at
 
                         if (
                             last_run_at is None
+                            and not is_cron
                             and schedule_obj.interval_seconds is not None
                         ):
                             if schedule_obj.start_datetime:
@@ -198,6 +261,9 @@ class DynamicDatabaseScheduler(Scheduler):
                                 last_run_at = datetime.now(timezone.utc) - timedelta(
                                     seconds=schedule_obj.interval_seconds
                                 )  # pragma: no cover
+
+                    if last_run_at is None and is_cron:
+                        last_run_at = self.app.now()
 
                     entry_kwargs = {
                         "name": entry_name,

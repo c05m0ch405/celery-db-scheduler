@@ -1,6 +1,8 @@
 # celery_db_scheduler/beat/test_scheduler.py
 
+import sys
 import time
+import types
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -11,7 +13,9 @@ from sqlalchemy.orm import sessionmaker
 
 from celery_db_scheduler.base import Base
 from celery_db_scheduler.models.task_schedule import TaskSchedule
-from ..beat.scheduler import DynamicDatabaseScheduler, OneTimeSchedule
+from celery_db_scheduler.utils.decorators import auto_disable_one_time_task
+
+from ..beat.scheduler import CronSchedule, DynamicDatabaseScheduler, OneTimeSchedule
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +34,8 @@ def _make_schedule_row(
     id=1,
     task_name="myapp.add",
     interval_seconds=None,
+    cron_expression=None,
+    timezone="UTC",
     start_datetime=None,
     last_run_at=None,
     task_args=None,
@@ -40,6 +46,8 @@ def _make_schedule_row(
     row.id = id
     row.task_name = task_name
     row.interval_seconds = interval_seconds
+    row.cron_expression = cron_expression
+    row.timezone = timezone
     row.start_datetime = start_datetime
     row.last_run_at = last_run_at
     row.task_args = task_args or []
@@ -94,6 +102,7 @@ def mock_celery_app():
     app.now.return_value = datetime.now(timezone.utc)
     app.conf = MagicMock()
     app.conf.beat_max_loop_interval = 300
+    app.conf.beat_cron_starting_deadline = 3600
     return app
 
 
@@ -504,3 +513,186 @@ class TestScheduleProperty:
         s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app, schedules=[])
         s._entries = {"foo": MagicMock()}
         assert s.schedule is s._entries
+
+
+# ===========================================================================
+# CronSchedule tests
+# ===========================================================================
+
+class TestCronSchedule:
+    """Tests for CronSchedule (wall-clock schedules in a given timezone)."""
+
+    @staticmethod
+    def _cron(mock_celery_app, now, expression="0 20 * * *", tz_name="Europe/Berlin"):
+        return CronSchedule(
+            expression, tz_name, nowfun=lambda: now, app=mock_celery_app
+        )
+
+    def test_rejects_wrong_field_count(self):
+        with pytest.raises(ValueError, match="5 fields"):
+            CronSchedule("0 20 * *", "UTC")
+
+    def test_rejects_unknown_timezone(self):
+        from zoneinfo import ZoneInfoNotFoundError
+
+        with pytest.raises(ZoneInfoNotFoundError):
+            CronSchedule("0 20 * * *", "Mars/Olympus")
+
+    def test_repr(self):
+        assert repr(CronSchedule("0 20 * * *", "Europe/Berlin")) == (
+            "<CronSchedule: 0 20 * * * (Europe/Berlin)>"
+        )
+
+    def test_not_due_before_local_time(self, mock_celery_app):
+        now = datetime(2026, 10, 29, 18, 59, 30, tzinfo=timezone.utc)
+        last_run = datetime(2026, 10, 28, 19, 0, tzinfo=timezone.utc)
+
+        is_due, next_in = self._cron(mock_celery_app, now).is_due(last_run)
+
+        assert is_due is False
+        assert next_in == 30
+
+    def test_due_at_local_time(self, mock_celery_app):
+        now = datetime(2026, 10, 29, 19, 0, 1, tzinfo=timezone.utc)
+        last_run = datetime(2026, 10, 28, 19, 0, tzinfo=timezone.utc)
+
+        is_due, next_in = self._cron(mock_celery_app, now).is_due(last_run)
+
+        assert is_due is True
+        assert next_in == 86399
+
+    def test_naive_last_run_at_is_treated_as_utc(self, mock_celery_app):
+        now = datetime(2026, 10, 29, 19, 0, 1, tzinfo=timezone.utc)
+
+        is_due, _ = self._cron(mock_celery_app, now).is_due(datetime(2026, 10, 28, 19, 0))
+
+        assert is_due is True
+
+    def test_keeps_local_time_across_dst_change(self, mock_celery_app):
+        last_run = datetime(2026, 10, 24, 18, 0, tzinfo=timezone.utc)
+
+        before = self._cron(
+            mock_celery_app, datetime(2026, 10, 25, 18, 59, tzinfo=timezone.utc)
+        )
+        at = self._cron(
+            mock_celery_app, datetime(2026, 10, 25, 19, 0, tzinfo=timezone.utc)
+        )
+
+        assert before.is_due(last_run) == (False, 60)
+        assert at.is_due(last_run)[0] is True
+
+    def test_catches_up_run_missed_within_deadline(self, mock_celery_app):
+        now = datetime(2026, 10, 29, 19, 30, tzinfo=timezone.utc)
+        last_run = datetime(2026, 10, 28, 19, 0, tzinfo=timezone.utc)
+
+        assert self._cron(mock_celery_app, now).is_due(last_run)[0] is True
+
+    def test_skips_run_missed_beyond_deadline(self, mock_celery_app):
+        now = datetime(2026, 10, 30, 2, 0, tzinfo=timezone.utc)
+        last_run = datetime(2026, 10, 28, 19, 0, tzinfo=timezone.utc)
+
+        is_due, next_in = self._cron(mock_celery_app, now).is_due(last_run)
+
+        assert is_due is False
+        assert next_in == 17 * 3600
+
+
+class TestSchedulerCronTasks:
+    def test_loads_cron_task_in_schedule_timezone(
+        self, monkeypatch, fake_registry, mock_celery_app
+    ):
+        last_run = datetime(2026, 10, 28, 19, 0, tzinfo=timezone.utc)
+        row = _make_schedule_row(
+            interval_seconds=None,
+            cron_expression="0 20 * * *",
+            timezone="Europe/Berlin",
+            last_run_at=last_run,
+        )
+        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app, schedules=[row])
+        s.sync()
+        entry = s.schedule[f"{row.task_name}-{row.id}"]
+
+        assert isinstance(entry.schedule, CronSchedule)
+        assert entry.schedule.tz.key == "Europe/Berlin"
+        assert entry.last_run_at == last_run
+
+    def test_new_cron_task_waits_for_next_match(
+        self, monkeypatch, fake_registry, mock_celery_app
+    ):
+        row = _make_schedule_row(
+            interval_seconds=None,
+            cron_expression="0 20 * * *",
+        )
+        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app, schedules=[row])
+        s.sync()
+        entry = s.schedule[f"{row.task_name}-{row.id}"]
+
+        assert entry.last_run_at is not None
+        assert entry.is_due()[0] is False
+
+    def test_cron_task_preserves_in_memory_last_run_at(
+        self, monkeypatch, fake_registry, mock_celery_app
+    ):
+        row = _make_schedule_row(
+            interval_seconds=None,
+            cron_expression="0 20 * * *",
+        )
+        s = _build_scheduler(monkeypatch, fake_registry, mock_celery_app, schedules=[row])
+        s.sync()
+        entry_name = f"{row.task_name}-{row.id}"
+        last_run = datetime.now(timezone.utc) - timedelta(minutes=5)
+        s.schedule[entry_name].last_run_at = last_run
+        s.sync()
+
+        assert s.schedule[entry_name].last_run_at == last_run
+
+    @pytest.mark.parametrize(
+        "cron_expression, tz_name",
+        [("0 20 * *", "UTC"), ("0 25 * * *", "UTC"), ("0 20 * * *", "Mars/Olympus")],
+    )
+    def test_invalid_cron_task_is_skipped(
+        self, monkeypatch, fake_registry, mock_celery_app, cron_expression, tz_name
+    ):
+        row = _make_schedule_row(
+            interval_seconds=None,
+            cron_expression=cron_expression,
+            timezone=tz_name,
+        )
+        with patch("celery_db_scheduler.beat.scheduler.logger") as mock_logger:
+            s = _build_scheduler(
+                monkeypatch, fake_registry, mock_celery_app, schedules=[row]
+            )
+            s.sync()
+            assert len(s.schedule) == 0
+
+        assert any(
+            "Invalid cron schedule" in str(call.args[0])
+            for call in mock_logger.error.call_args_list
+        )
+
+
+def test_auto_disable_one_time_task_sync_does_not_disable_cron_task():
+    schedule = MagicMock(spec=TaskSchedule)
+    schedule.interval_seconds = None
+    schedule.cron_expression = "0 20 * * *"
+    schedule.enabled = True
+
+    fake_session = MagicMock()
+    fake_session.get.return_value = schedule
+
+    def fake_get_session():
+        yield fake_session
+
+    @auto_disable_one_time_task()
+    def fake_task(task_id):
+        return "done"
+
+    fake_app = types.ModuleType("app")
+    fake_session_mod = types.ModuleType("app.session")
+    fake_session_mod.get_session = fake_get_session
+    fake_app.session = fake_session_mod
+    with patch.dict(sys.modules, {"app": fake_app, "app.session": fake_session_mod}):
+        assert fake_task(3000) == "done"
+
+    fake_session.commit.assert_not_called()
+    assert schedule.enabled is True

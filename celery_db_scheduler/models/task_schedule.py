@@ -14,6 +14,7 @@ class TaskSchedule(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     task_name: Mapped[str] = mapped_column(String, nullable=False)
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=True)
+    cron_expression: Mapped[str | None] = mapped_column(String, nullable=True)
     _task_args: Mapped[str | None] = mapped_column(Text, nullable=True)
     _task_kwargs: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

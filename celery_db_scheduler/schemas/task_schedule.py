@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class TaskScheduleBase(BaseModel):
     task_name: str
     interval_seconds: Optional[int] = None
+    cron_expression: Optional[str] = None
     task_args: Optional[List[Any]] = Field(default=None)
     task_kwargs: Optional[Dict[str, Any]] = Field(default=None)
     enabled: bool = True
