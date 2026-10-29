@@ -34,7 +34,7 @@ classifiers = [
 ]
 dependencies = [
     "celery>=5.3",
-    "sqlalchemy>=2.0",
+    "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.29",
     "pydantic>=2.0",
     "pytz>=2024.1",
@@ -57,6 +57,7 @@ packages = ["celery_db_scheduler"]
 [tool.pytest.ini_options]
 testpaths = ["celery_db_scheduler/tests"]
 asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.hatch.build.targets.sdist]
 include = [
