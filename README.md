@@ -14,7 +14,7 @@ A **SQLAlchemy-backed Celery Beat scheduler** that stores task schedules in a Po
 - **Dynamic scheduling** — add or remove tasks at runtime via database rows; Beat picks up changes within 60 seconds.
 - **One-time tasks** — schedule a task to fire once at a specific UTC datetime; the library marks it disabled automatically after execution.
 - **Recurring tasks** — standard interval-based schedules (`interval_seconds`).
-- **Cron tasks** — wall-clock schedules via a 5-field cron expression, evaluated in each row's `timezone`.
+- **Cron tasks** — wall-clock schedules via a 5-field cron expression (`minute hour day month weekday`), evaluated in each row's `timezone`.
 - **Time-window support** — restrict when a task may run using `start_datetime`, `end_datetime`, `daily_start_time`, `daily_end_time`, and a per-schedule `timezone`.
 - **Async-first workers** — built-in async SQLAlchemy session factory for FastAPI / asyncio workers.
 - **Sync Beat process** — the Beat scheduler uses a standard synchronous SQLAlchemy session, compatible with all Celery Beat deployments.
